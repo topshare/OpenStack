@@ -1,0 +1,88 @@
+由于openstack在很多后端和网络参数方面的高度可配置性，导致很难用文档描述openstack所有可能的部署情况。因此，在本章中我们定义了一个示例架构的简化记录，这些都是作者实际的部署和配置经验。
+
+因此，在这篇指南中我们定义了一个特定的架构来简化文档任务，并且限定本指南的范围以便集中到作者有过直接部署经验的配置上。
+
+概要
+
+openstack发行版 Folsom
+主机操作系统 Ubuntu 12.04 LTS
+Openstack软件包仓库 Ubuntu Cloud Archive(https://wiki.ubuntu.com/ServerTeam/CloudArchive) *
+虚拟化 KVM
+数据库 Mysql*
+消息服务器 RabbitMQ
+网络服务 nova-network
+网络管理 FlatDHCP
+单nova-network还是多nova-network multi-host*
+镜像服务(glance)存储 文件
+认证服务器(keyston)驱动 SQL
+块设备存储服务(cinder)存储 LVM/iSCSI
+实时迁移存储 共享的NFS*
+对象存储 Openstack对象存储(swift)
+
+星号(*)表示示例架构的默认安装设置。
+
+请注意在本示例架构中Openstack支持以下的功能，但是这都是可选项：
+1.控制面板
+2.块存储
+3.浮动IP地址(FLoating IPs）
+4.实时迁移
+5.对象存储
+
+原理
+这个示例架构基于目前Openstack Folsom的稳定版。 尤其需要说明，如果给出的示例架构的作者本身没有部署和配置Openstack Folsom的经验，我们是不会考虑这样的部署架构的。我们相信目前很多在生产上运行Openstack构建云计算的公司也会和我们的想法一样。
+第一步要选择一个运行在所有物理节点上的操作系统。目前几个Linux发行版都支持Openstack，由于大量的开发社区使用了Ubuntu、相比其它发行版其功能也比较完整和有比较清晰的支持计划，所以我们使用了Ubuntu 12.04 LTS(长期支持)。
+我们建议你不要采用Ubuntu默认提供的Openstack安装包，最好采用Ubuntu Cloud Archive(https://wiki.ubuntu.com/ServerTeam/CloudArchive)的软件包。Cloud Archive是由Canonical支持包库，可以让你升级到未来的Openstack版本，同时，目前仍保持在Ubuntu12.04 版本。
+KVM 使用ubuntu下支持的KVM作为虚拟化是前面对操作系统选择的一种补充，另一方面，整个Openstack开发社区也对Ubuntu也有很高的重视。
+Mysql 尽管最近所有权有变更，但还是遵循开源的趋势。Ubuntu上Mysql数据库经过运行大量Openstack实际数据的考验。我们之所以放弃使用SQLite，是因为SQLite是一个不适合实际生产需求的数据库。
+在Ubuntu中，选择RabbitMQ作为消息服务器，RabbitMQ是经过生产环境的测试，而非ZeroMQ, Qpid等其它Openstack支持的AMQP消息服务器。而且RabbitMQ是唯一能支持openstack Computecell特性。由于消息服务是系统不可缺少的组件，建议采用RabbitMQ集群。
+
+在前几章讨论过，Openstack Compute的网络模式有几种选择，建议FlatDHCP 的Multi-host 模式来增加可靠性，即在每一个Openstack 计算节点部署nova-network 守护进程。这种方式提供了一个可靠的机制来确保网络的中断或故障被隔离(只在单台机发生)，这是推荐的配置。
+
+支持在线迁移(live migration)，需要NFS模式的共享存储。
+
+注意到在一些小规模的部署中，运行一个对象存储服务用来存储虚拟机的镜像会比较昂贵，可以选择采用文件方式作为镜像目录和部署服务(Glance)。如果采用对象存储的设计，通常会建议作为后台服务。
+
+选用SQL模式的认证服务(keystone)作为数据存储，比如LDAP。这种模式安装容易，且非常健壮。本文作者提醒很多需要捆绑已有的目录服务的安装案例，需要注意理解arry of option available特性 (http://docs.openstack.org/folsom/openstack-compute/admin/content/reference-for-ldap-config-options.html)。
+
+块存储服务(Cinder) 被原生安装在一个外接存储节点上，并采用LVM/iSCSI 插件。大多数块设备服务插件和特定厂商的产品结合在一起，可能会限制用户对这些硬件的应用，但是LVM/iSCSI 在普通硬件上非常健壮可靠。
+
+Openstack可以在没有Dashboard的情况下运行，但我们认为它是必须的，不仅因为用户需要和云交互，而且作为一个运维人员的工具。 另外，Dashboard采用的Django使得它成为一个易于扩展的系统。
+
+
+为什么不用openstack网络服务(quantum)?
+我们在本指南中不讨论网络服务(Quantum), 因为本文作者们在生产系统上只有用nova-network的经验。另外，Quantum目前还不支持multi-host networking。 
+
+为啥用 multi-host 模式的网络?
+
+在Openstack缺省模式下，只有一个nova-network服务运行在整个系统中（通常在controller上），向运行实例提供NAT，DHCP,DNS等网络服务。如果nova-network的节点down机，你将无法访问实例，所有实例也无法访问internet。如果网络进出的流量比较大，运行nova-network的单一节点也会成为瓶颈。
+
+多主机(Multi-host)(http://docs.openstack.org/folsom/openstack-compute/admin/content/existing-ha-networking-options.html#d6e8906)是一个网络高可靠的选项，nova-network服务运行在每个节点而非单节点。
+
+详述
+
+参考架构包括多个计算节点，一个云控制器(controller), 一个外接的NFS存储服务器，为节点提供存储及Openstack提供块存储以保存软件镜像。一个NTP服务器为所有节点同步时间。并为网络配置multi-host模式的FlatDHCPManager。
+
+
+图（1）
+
+
+云控制器：云控制器运行以下服务： Dashboard, API service，database（MySQL），消息队列服务（RabbitMQ），计算资源的调度器（nova-scheduler），认证服务(keystone, nova-consoleauth), 镜像服务（galance-api,glance-registry), 客户终端接入服务， 以及块存储服务包括存储资源调度器(cinder-api, cinder-scheduler)。
+
+计算节点：计算资源在计算节点上，在我们的参考架构里计算节点运行：KVM, libvirt(hypervisort的驱动，实现计算节点间的在线迁移)， nova-compute, nova-metadata（通常在multi-host的方式下使用来收集实例的元数据)， nova-vncproxy, nova-network。
+
+网络部分包括两个交换机，一个为内部/管理网络流量，一个为了公共网络包括floating ip的流量。因此，一般来说控制器和计算节点有两个网卡。Openstack 块存储和NFS存储服务器只需要能访问内部网络，因而只需要一个网卡，当然如果能有多个网卡，运行在捆绑模式下是更好的。Floating IP 可以直接访问internet， 而Flat IP 需要通过NAT来访问。
+
+
+
+（图2）
+
+
+可选扩展
+
+可以从以下几方面扩展本文的参考架构：
+
+* 增加更多的云控制器（http://docs.openstack.org/trunk/openstack-ops/content/maintenance.html）
+* 增加Openstack 存储服务((http://docs.openstack.org/folsom/openstack-object-storage/admin/)
+* 增加Openstack 块存储服务器（第十二章：http://docs.openstack.org/trunk/openstack-ops/content/maintenance.html）
+
+
